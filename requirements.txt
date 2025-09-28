@@ -1,9 +1,13 @@
 fastapi
 uvicorn
-python-dotenv
+pydantic-settings
 GitPython
 PyGithub
 google-generativeai
 pydantic
 aiofiles
 httpx
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+redis

@@ -18,16 +18,57 @@
       font-family: 'Inter', sans-serif;
       background-color: #0e1117;
       color: #c9d1d9;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
+      min-height: 100vh;
       padding: 2rem;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding: 1rem 0;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #58a6ff, #1f6feb);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .logout-btn {
+      background: rgba(255, 255, 255, 0.1);
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: #58a6ff;
     }
 
     .container {
       width: 100%;
       max-width: 600px;
+      margin: 0 auto;
       padding: 2rem;
       background: rgba(255, 255, 255, 0.04);
       border-radius: 16px;
@@ -91,6 +132,12 @@
       box-shadow: 0 0 15px #58a6ff;
     }
 
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
     .terminal {
       margin-top: 2rem;
       background-color: #161b22;
@@ -104,14 +151,52 @@
       overflow-y: auto;
       border: 1px solid #30363d;
     }
+
+    .auth-required {
+      text-align: center;
+      padding: 2rem;
+      background: rgba(255, 107, 107, 0.1);
+      border: 1px solid rgba(255, 107, 107, 0.3);
+      border-radius: 8px;
+      margin-top: 2rem;
+    }
+
+    .auth-required h3 {
+      color: #ff6b6b;
+      margin-bottom: 1rem;
+    }
+
+    .auth-required a {
+      color: #58a6ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .auth-required a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
+  <div class="header">
+    <div></div>
+    <div class="user-info" id="user-info" style="display: none;">
+      <div class="user-avatar" id="user-avatar"></div>
+      <span id="username"></span>
+      <button class="logout-btn" id="logout-btn">Logout</button>
+    </div>
+  </div>
+
   <div class="container">
     <h1>CodeAssist</h1>
-    <p class="subtitle">Your private AI coding agent</p>
+    <p class="subtitle">Your secure AI coding agent</p>
 
-    <form id="ai-form">
+    <div id="auth-required" class="auth-required" style="display: none;">
+      <h3>🔒 Authentication Required</h3>
+      <p>Please <a href="/frontend/login.html">sign in</a> to use the AI coding agent.</p>
+    </div>
+
+    <form id="ai-form" style="display: none;">
       <input type="text" id="repoUrl" placeholder="Enter GitHub repo URL" required />
       <textarea id="prompt" placeholder="What do you want the agent to do?" rows="3" required></textarea>
       <button type="submit" id="submitBtn">Run AI Agent</button>
@@ -121,43 +206,142 @@
   </div>
 
   <script>
-    const form = document.getElementById('ai-form');
-    const responseDiv = document.getElementById('response');
-    const button = document.getElementById('submitBtn');
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const repoUrl = document.getElementById('repoUrl').value;
-      const prompt = document.getElementById('prompt').value;
-
-      responseDiv.textContent = '⏳ Running AI Agent...\n';
-
-      button.disabled = true;
-      button.textContent = 'Running...';
-
-      try {
-        const res = await fetch('/code/prompt_on_repo', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ repoUrl, prompt }),
-        });
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          responseDiv.textContent += decoder.decode(value, { stream: true });
-          responseDiv.scrollTop = responseDiv.scrollHeight;
-        }
-      } catch (err) {
-        responseDiv.textContent += `❌ Error: ${err.message}`;
-      } finally {
-        button.disabled = false;
-        button.textContent = 'Run AI Agent';
+    class CodeAssistApp {
+      constructor() {
+        this.form = document.getElementById('ai-form');
+        this.responseDiv = document.getElementById('response');
+        this.button = document.getElementById('submitBtn');
+        this.authRequired = document.getElementById('auth-required');
+        this.userInfo = document.getElementById('user-info');
+        this.username = document.getElementById('username');
+        this.userAvatar = document.getElementById('user-avatar');
+        this.logoutBtn = document.getElementById('logout-btn');
+        
+        this.currentUser = null;
+        this.authToken = null;
+        
+        this.bindEvents();
+        this.checkAuth();
       }
+
+      bindEvents() {
+        this.form.addEventListener('submit', (e) => this.handleSubmit(e));
+        this.logoutBtn.addEventListener('click', () => this.handleLogout());
+      }
+
+      async checkAuth() {
+        const token = localStorage.getItem('auth_token');
+        const expires = localStorage.getItem('token_expires');
+        
+        if (!token || !expires || Date.now() > parseInt(expires)) {
+          this.showAuthRequired();
+          return;
+        }
+
+        try {
+          const response = await fetch('/auth/verify', {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          if (response.ok) {
+            const user = await response.json();
+            this.setAuthenticatedUser(user, token);
+          } else {
+            this.clearAuth();
+            this.showAuthRequired();
+          }
+        } catch (error) {
+          this.clearAuth();
+          this.showAuthRequired();
+        }
+      }
+
+      setAuthenticatedUser(user, token) {
+        this.currentUser = user;
+        this.authToken = token;
+        
+        this.username.textContent = user.username;
+        this.userAvatar.textContent = user.username.charAt(0).toUpperCase();
+        
+        this.userInfo.style.display = 'flex';
+        this.form.style.display = 'flex';
+        this.authRequired.style.display = 'none';
+      }
+
+      showAuthRequired() {
+        this.userInfo.style.display = 'none';
+        this.form.style.display = 'none';
+        this.authRequired.style.display = 'block';
+        this.responseDiv.textContent = '';
+      }
+
+      clearAuth() {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('token_expires');
+        this.currentUser = null;
+        this.authToken = null;
+      }
+
+      handleLogout() {
+        this.clearAuth();
+        this.showAuthRequired();
+        this.responseDiv.textContent = 'Logged out successfully.';
+      }
+
+      async handleSubmit(e) {
+        e.preventDefault();
+        
+        if (!this.authToken) {
+          this.showAuthRequired();
+          return;
+        }
+        
+        const repoUrl = document.getElementById('repoUrl').value;
+        const prompt = document.getElementById('prompt').value;
+
+        this.responseDiv.textContent = '⏳ Running AI Agent...\n';
+        this.button.disabled = true;
+        this.button.textContent = 'Running...';
+
+        try {
+          const res = await fetch('/code/prompt_on_repo', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.authToken}`
+            },
+            body: JSON.stringify({ repoUrl, prompt }),
+          });
+
+          if (res.status === 401) {
+            this.clearAuth();
+            this.showAuthRequired();
+            this.responseDiv.textContent = '❌ Authentication expired. Please log in again.';
+            return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            this.responseDiv.textContent += decoder.decode(value, { stream: true });
+            this.responseDiv.scrollTop = this.responseDiv.scrollHeight;
+          }
+        } catch (err) {
+          this.responseDiv.textContent += `❌ Error: ${err.message}`;
+        } finally {
+          this.button.disabled = false;
+          this.button.textContent = 'Run AI Agent';
+        }
+      }
+    }
+
+    // Initialize app when DOM is loaded
+    document.addEventListener('DOMContentLoaded', () => {
+      new CodeAssistApp();
     });
   </script>
 </body>

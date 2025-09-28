@@ -9,7 +9,7 @@ import tempfile
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
 from app.schemas.request import CodeRequest
@@ -17,6 +17,8 @@ from app.services.git_service import GitService
 from app.services.repo_analyzer import analyze_repo_structure
 from app.services.edit_planner import plan_changes
 from app.services.code_editor import apply_edits, generate_pr_description
+from app.core.auth import require_auth
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -26,7 +28,7 @@ def create_sse_message(event: str, data: str) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
 
-async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
+async def event_generator(request: CodeRequest, current_user: dict) -> AsyncGenerator[str, None]:
     """
     Async generator that orchestrates the entire AI coding workflow
     and yields SSE messages at each step.
@@ -35,10 +37,10 @@ async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
     
     try:
         # Initialize
-        yield create_sse_message("start", "Initializing AI coding agent...")
+        yield create_sse_message("start", f"Initializing AI coding agent for user: {current_user['username']}...")
         
         # Get environment variables
-        github_token = os.getenv("GITHUB_TOKEN")
+        github_token = settings.GITHUB_TOKEN
         if not github_token:
             raise HTTPException(status_code=500, detail="GitHub token not configured")
             
@@ -149,7 +151,7 @@ async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
         await asyncio.sleep(0.1)
         
         try:
-            commit_message = f"AI Agent: {request.prompt[:100]}{'...' if len(request.prompt) > 100 else ''}"
+            commit_message = f"AI Agent ({current_user['username']}): {request.prompt[:100]}{'...' if len(request.prompt) > 100 else ''}"
             git_service.commit_and_push(repo_path, commit_message, branch_name)
             yield create_sse_message("commit", "Changes committed and pushed successfully.")
         except Exception as e:
@@ -162,11 +164,13 @@ async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
         
         try:
             pr_title, pr_body = await generate_pr_description(request.prompt, changes_plan)
+            # Add user attribution to PR body
+            pr_body += f"\n\n---\n*Created by AI Agent for user: {current_user['username']}*"
             yield create_sse_message("pr", "PR description generated.")
         except Exception as e:
             # Fallback to simple description
             pr_title = f"AI Agent: {request.prompt[:50]}{'...' if len(request.prompt) > 50 else ''}"
-            pr_body = f"This pull request was created by an AI coding agent.\n\nPrompt: {request.prompt}\n\nChanges applied automatically based on the provided instructions."
+            pr_body = f"This pull request was created by an AI coding agent.\n\nPrompt: {request.prompt}\n\nChanges applied automatically based on the provided instructions.\n\n---\n*Created by AI Agent for user: {current_user['username']}*"
             yield create_sse_message("warning", f"Using fallback PR description: {str(e)}")
             
         # Create pull request
@@ -185,6 +189,7 @@ async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
                 "pr_url": pr_url,
                 "branch_name": branch_name,
                 "files_modified": files_modified,
+                "user": current_user['username'],
                 "summary": f"Successfully created pull request with {files_modified} modified files."
             }
             
@@ -209,9 +214,10 @@ async def event_generator(request: CodeRequest) -> AsyncGenerator[str, None]:
 
 
 @router.post("/prompt_on_repo")
-async def process_code_request(request: CodeRequest):
+async def process_code_request(request: CodeRequest, current_user: dict = Depends(require_auth)):
     """
     Main endpoint that processes a code request and streams the workflow progress.
+    Requires authentication.
     
     Returns a Server-Sent Events stream with the following event types:
     - start: Workflow initialization
@@ -227,7 +233,7 @@ async def process_code_request(request: CodeRequest):
     - cleanup: Cleanup operations
     """
     return StreamingResponse(
-        event_generator(request),
+        event_generator(request, current_user),
         media_type="text/plain",
         headers={
             "Cache-Control": "no-cache",

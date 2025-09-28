@@ -33,8 +33,14 @@ class GitService:
             # Ensure the parent directory exists
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             
-            # Clone the repository
-            Repo.clone_from(repo_url, local_path)
+            # Clone the repository with authentication
+            if repo_url.startswith('https://github.com/'):
+                # Inject token for authentication
+                parsed_url = urlparse(repo_url)
+                authenticated_url = f"https://{self.github_token}@{parsed_url.netloc}{parsed_url.path}"
+                Repo.clone_from(authenticated_url, local_path)
+            else:
+                Repo.clone_from(repo_url, local_path)
             
         except Exception as e:
             raise Exception(f"Failed to clone repository {repo_url}: {str(e)}")
@@ -92,17 +98,31 @@ class GitService:
             # Commit changes
             repo.index.commit(commit_message)
             
-            # Set up authentication for push
+            # Set up authentication for push - fix the URL format
             origin_url = repo.remotes.origin.url
             
-            # If it's an HTTPS URL, inject the token
+            # Ensure we have the correct authenticated URL format
             if origin_url.startswith('https://'):
                 parsed_url = urlparse(origin_url)
-                authenticated_url = f"https://{self.github_token}@{parsed_url.netloc}{parsed_url.path}"
+                # Remove any existing token from URL first
+                clean_netloc = parsed_url.netloc.split('@')[-1]
+                authenticated_url = f"https://{self.github_token}@{clean_netloc}{parsed_url.path}"
+                
+                # Update the remote URL
                 repo.remotes.origin.set_url(authenticated_url)
-            
-            # Push the branch
-            repo.remotes.origin.push(branch_name)
+                
+                # Push the branch with explicit remote and branch
+                try:
+                    repo.git.push('origin', branch_name, '--set-upstream')
+                except Exception as push_error:
+                    # Fallback: try force push if branch exists
+                    try:
+                        repo.git.push('origin', branch_name, '--force')
+                    except Exception:
+                        raise Exception(f"Failed to push branch {branch_name}: {str(push_error)}")
+            else:
+                # For SSH URLs, assume key-based auth is configured
+                repo.git.push('origin', branch_name, '--set-upstream')
             
         except Exception as e:
             raise Exception(f"Failed to commit and push changes: {str(e)}")
@@ -140,6 +160,12 @@ class GitService:
             # Get the default branch
             default_branch = repo.default_branch
             
+            # Check if branch exists on remote
+            try:
+                repo.get_branch(branch_name)
+            except Exception:
+                raise Exception(f"Branch {branch_name} not found on remote. Make sure push was successful.")
+            
             # Create the pull request
             pr = repo.create_pull(
                 title=title,
@@ -154,6 +180,7 @@ class GitService:
             if e.status == 422 and "pull request already exists" in str(e.data):
                 # Try to find existing PR
                 try:
+                    repo = self.github_client.get_repo(f"{owner}/{repo_name}")
                     pulls = repo.get_pulls(head=f"{owner}:{branch_name}", state='open')
                     for pr in pulls:
                         return pr.html_url
