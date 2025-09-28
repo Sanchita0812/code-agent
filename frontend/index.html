@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeAssist AI Agent</title>
+  <style>
+    /* Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0e1117;
+      color: #c9d1d9;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+      padding: 2rem;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      color: #58a6ff;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 1rem;
+      color: #8b949e;
+      margin-bottom: 2rem;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    input, textarea {
+      background-color: #161b22;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 0.8rem;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, textarea:focus {
+      border-color: #58a6ff;
+    }
+
+    input::placeholder, textarea::placeholder {
+      color: #8b949e;
+    }
+
+    button {
+      background: linear-gradient(135deg, #58a6ff, #1f6feb);
+      color: white;
+      border: none;
+      padding: 0.9rem;
+      font-weight: 600;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease-in-out;
+    }
+
+    button:hover {
+      transform: scale(1.03);
+      box-shadow: 0 0 15px #58a6ff;
+    }
+
+    .terminal {
+      margin-top: 2rem;
+      background-color: #161b22;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      height: 200px;
+      overflow-y: auto;
+      border: 1px solid #30363d;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>CodeAssist</h1>
+    <p class="subtitle">Your private AI coding agent</p>
+
+    <form id="ai-form">
+      <input type="text" id="repoUrl" placeholder="Enter GitHub repo URL" required />
+      <textarea id="prompt" placeholder="What do you want the agent to do?" rows="3" required></textarea>
+      <button type="submit" id="submitBtn">Run AI Agent</button>
+    </form>
+
+    <div id="response" class="terminal"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('ai-form');
+    const responseDiv = document.getElementById('response');
+    const button = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const repoUrl = document.getElementById('repoUrl').value;
+      const prompt = document.getElementById('prompt').value;
+
+      responseDiv.textContent = '⏳ Running AI Agent...\n';
+
+      button.disabled = true;
+      button.textContent = 'Running...';
+
+      try {
+        const res = await fetch('/code/prompt_on_repo', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ repoUrl, prompt }),
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          responseDiv.textContent += decoder.decode(value, { stream: true });
+          responseDiv.scrollTop = responseDiv.scrollHeight;
+        }
+      } catch (err) {
+        responseDiv.textContent += `❌ Error: ${err.message}`;
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Run AI Agent';
+      }
+    });
+  </script>
+</body>
+</html>
